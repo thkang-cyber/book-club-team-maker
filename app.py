@@ -9,25 +9,23 @@ import os
 import datetime
 
 # ===========================================================
-# 1. 초기 설정 및 데이터 관리
+# 1. 기본 설정 및 데이터 로드
 # ===========================================================
 
-st.set_page_config(page_title="독서모임 조 편성 시스템", page_icon="📚", layout="wide")
+st.set_page_config(page_title="독서모임 운영 시스템", page_icon="📚", layout="wide")
 
 DB_FILE = "meeting_db.json"
 
-# 이름 통일 매핑 (수정이나 추가가 필요하면 여기서 관리)
 NAME_MAP = {
     "혜은": "담이", "노쥬": "노주", "지민": "이지민", "지민(한)": "한지민",
     "정석영": "석영", "윤승현": "승현", "정일근": "일근"
 }
 
 def clean_name(name):
-    # 괄호 제거 및 공백 제거
     name = re.sub(r'\([^)]*\)', '', name).strip()
     return NAME_MAP.get(name, name)
 
-# --- 초기 데이터 (1회~26회) ---
+# 초기 데이터 (1회~26회)
 DEFAULT_DATA = [
     {"round": 1, "date": "23.10", "groups": [["혜은", "정은", "임구", "재성", "소희", "기창", "채니", "임정", "승현"]]},
     {"round": 2, "date": "23.11", "groups": [["채니", "사랑", "은하", "기창", "승현"]]},
@@ -76,197 +74,108 @@ def analyze_overlap(data_list):
     
     for record in data_list:
         for group in record["groups"]:
-            # 정제된 이름 리스트 생성
             cleaned_group = [clean_name(m) for m in group if clean_name(m)]
             cleaned_group = list(set(cleaned_group))
             all_people.update(cleaned_group)
-            
-            # 만남 횟수 기록
             for m1, m2 in itertools.combinations(cleaned_group, 2):
                 pair = tuple(sorted([m1, m2]))
                 counter[pair] += 1
     return counter, sorted(list(all_people))
 
-# 데이터 로드
 db_data = load_data()
 overlap_counts, all_members = analyze_overlap(db_data)
 
 # ===========================================================
-# 2. UI 구현 (탭 구조)
+# 2. UI 구현
 # ===========================================================
 st.title("📚 독서모임 운영 시스템")
 
-# 탭 분리
-tab1, tab2 = st.tabs(["🛠️ 조 편성 (Generator)", "📝 히스토리 관리 (Admin)"])
+tab1, tab2, tab3 = st.tabs(["🛠️ 조 편성", "📝 히스토리 관리", "📊 만남 분석"])
 
-# ---------------------------------------------------
-# [탭 1] 조 편성 기능
-# ---------------------------------------------------
+# [탭 1] 조 편성
 with tab1:
     st.header("새로운 조 만들기")
-    st.caption("역대 데이터를 바탕으로 겹치지 않게 자동으로 편성합니다.")
-    
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.subheader("설정")
-        # 명단 입력
         input_type = st.radio("명단 입력 방식", ["직접 입력", "전체 명단에서 선택"], horizontal=True)
         current_attendees = []
-        
         if input_type == "직접 입력":
-            raw = st.text_area("참석자 (콤마/엔터로 구분)", height=150, placeholder="기창, 채니, 무근...")
+            raw = st.text_area("참석자 (콤마/엔터로 구분)", height=150)
             if raw:
                 current_attendees = [n.strip() for n in re.split(r'[,\n\t]+', raw) if n.strip()]
         else:
             current_attendees = st.multiselect("참석자 선택", all_members)
         
-        st.info(f"참석 인원: **{len(current_attendees)}명**")
-
-        # 조장 선택
+        st.info(f"참석: **{len(current_attendees)}명**")
         current_leaders = []
         if current_attendees:
             current_leaders = st.multiselect("조장 선택", current_attendees)
-            
+        
         run_btn = st.button("🚀 조 편성 실행", type="primary")
 
     with col2:
-        if run_btn:
-            if not current_leaders:
-                st.error("조장을 선택해주세요.")
-            elif len(current_leaders) > len(current_attendees):
-                st.error("조장이 참석자보다 많습니다.")
-            else:
-                # --- 알고리즘 실행 ---
-                teams = {leader: [leader] for leader in current_leaders}
-                pool = [p for p in current_attendees if clean_name(p) not in [clean_name(l) for l in current_leaders]]
-                random.shuffle(pool)
-                
-                for person in pool:
-                    p_name = clean_name(person)
-                    best_leader = None
-                    min_score = float('inf')
-                    sorted_leaders = sorted(teams.keys(), key=lambda k: len(teams[k])) # 인원 적은 조 우선
-                    
-                    for leader in sorted_leaders:
-                        current_team = teams[leader]
-                        score = 0
-                        for member in current_team:
-                            pair = tuple(sorted([p_name, clean_name(member)]))
-                            score += overlap_counts[pair]
-                        if score < min_score:
-                            min_score = score
-                            best_leader = leader
-                    teams[best_leader].append(person)
-                
-                # --- 결과 표시 ---
-                st.subheader("🎉 편성 결과")
-                
-                # 결과 표시용 컨테이너
-                result_cols = st.columns(len(teams))
-                for idx, (leader, members) in enumerate(teams.items()):
-                    with result_cols[idx % len(result_cols)]:
-                        with st.container(border=True):
-                            st.markdown(f"**{idx+1}조 ({len(members)}명)**")
-                            st.markdown(f"👑 **{leader}**")
-                            for m in members:
-                                if m != leader:
-                                    st.text(f"- {m}")
-                            
-                            # 검증
-                            warnings = []
-                            for m1, m2 in itertools.combinations(members, 2):
-                                if overlap_counts[tuple(sorted([clean_name(m1), clean_name(m2)]))] >= 3:
-                                    warnings.append(f"{m1}-{m2}")
-                            if warnings:
-                                st.warning(f"⚠️ {', '.join(warnings)}")
-                            else:
-                                st.success("OK")
-                
-                # --- 저장 기능 ---
-                st.divider()
-                st.write("이 결과가 마음에 드시면 저장하세요.")
-                if st.button("💾 결과 저장하기 (DB 업데이트)"):
-                    new_record = {
-                        "round": len(db_data) + 1,
-                        "date": datetime.datetime.now().strftime("%y.%m"),
-                        "groups": list(teams.values())
-                    }
-                    db_data.append(new_record)
-                    save_data(db_data)
-                    st.success(f"{new_record['round']}회차 데이터가 저장되었습니다! (히스토리 탭에서 확인 가능)")
-                    st.rerun()
+        if run_btn and current_leaders:
+            teams = {leader: [leader] for leader in current_leaders}
+            pool = [p for p in current_attendees if clean_name(p) not in [clean_name(l) for l in current_leaders]]
+            random.shuffle(pool)
+            
+            for person in pool:
+                p_name = clean_name(person)
+                best_leader = None
+                min_score = float('inf')
+                sorted_leaders = sorted(teams.keys(), key=lambda k: len(teams[k]))
+                for leader in sorted_leaders:
+                    current_team = teams[leader]
+                    score = 0
+                    for member in current_team:
+                        pair = tuple(sorted([p_name, clean_name(member)]))
+                        score += overlap_counts[pair]
+                    if score < min_score:
+                        min_score = score
+                        best_leader = leader
+                teams[best_leader].append(person)
+            
+            st.subheader("🎉 편성 결과")
+            result_cols = st.columns(len(teams))
+            for idx, (leader, members) in enumerate(teams.items()):
+                with result_cols[idx % len(result_cols)]:
+                    with st.container(border=True):
+                        st.markdown(f"**{idx+1}조 ({len(members)}명)**")
+                        st.markdown(f"👑 **{leader}**")
+                        for m in members:
+                            if m != leader:
+                                st.text(f"- {m}")
+                        # 검증
+                        warnings = []
+                        for m1, m2 in itertools.combinations(members, 2):
+                            if overlap_counts[tuple(sorted([clean_name(m1), clean_name(m2)]))] >= 3:
+                                warnings.append(f"{m1}-{m2}")
+                        if warnings:
+                            st.warning(f"⚠️ {', '.join(warnings)}")
+                        else:
+                            st.success("OK")
+            
+            st.divider()
+            if st.button("💾 결과 저장하기 (DB 업데이트)"):
+                new_record = {
+                    "round": len(db_data) + 1,
+                    "date": datetime.datetime.now().strftime("%y.%m"),
+                    "groups": list(teams.values())
+                }
+                db_data.append(new_record)
+                save_data(db_data)
+                st.success("저장되었습니다!")
+                st.rerun()
 
-# ---------------------------------------------------
-# [탭 2] 히스토리 관리 기능 (수정/삭제)
-# ---------------------------------------------------
+# [탭 2] 히스토리 관리
 with tab2:
-    st.header("📝 히스토리 데이터 관리")
-    st.caption("잘못 입력된 데이터를 수정하거나 삭제할 수 있습니다.")
-
-    # 데이터를 DataFrame으로 변환하여 표시
-    # 수정하기 쉽도록 포맷팅: 회차 | 날짜 | 조장 | 조원들(텍스트)
-    
+    st.header("📝 데이터 조회 및 삭제")
     flat_data = []
     for record in db_data:
         groups_str = []
         for group in record['groups']:
             groups_str.append(f"[{group[0]}(장): {', '.join(group[1:])}]")
-        
-        flat_data.append({
-            "회차": record['round'],
-            "시기": record['date'],
-            "조 편성 내역": " / ".join(groups_str)
-        })
+        flat_data.append({"회차": record['round'], "시기": record['date'], "조 편성": " / ".join(groups_str)})
     
-    df = pd.DataFrame(flat_data)
-    
-    # 1. 데이터 조회 (편집 가능한 테이블)
-    st.subheader("1. 데이터 조회 및 수정")
-    st.info("아래 표는 읽기 전용입니다. 수정을 원하시면 하단의 '삭제' 후 '재등록' 기능을 이용하거나 코드를 고도화해야 합니다.")
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    st.divider()
-    
-    # 2. 특정 회차 삭제 기능
-    st.subheader("2. 잘못된 회차 삭제")
-    
-    col_del1, col_del2 = st.columns([3, 1])
-    with col_del1:
-        delete_target = st.selectbox("삭제할 회차 선택", df['회차'].sort_values(ascending=False))
-    with col_del2:
-        st.write("") # 간격 맞춤
-        st.write("")
-        if st.button("🗑️ 해당 회차 삭제", type="primary"):
-            # 리스트에서 해당 회차 삭제
-            new_db = [r for r in db_data if r['round'] != delete_target]
-            # 번호 재정렬 (선택 사항)
-            # for i, r in enumerate(new_db):
-            #     r['round'] = i + 1 
-            save_data(new_db)
-            st.success(f"{delete_target}회차 데이터가 삭제되었습니다.")
-            st.rerun()
-
-    # 3. 수동 데이터 추가 (누락된 것 넣기)
-    st.divider()
-    with st.expander("➕ 수동으로 데이터 추가하기 (고급)"):
-        st.write("자동 조 편성이 아니라, 수동으로 했던 모임을 기록하고 싶을 때 사용하세요.")
-        
-        new_round_num = st.number_input("회차", value=len(db_data)+1, step=1)
-        new_date = st.text_input("시기 (예: 25.12)", value=datetime.datetime.now().strftime("%y.%m"))
-        new_group_text = st.text_area("조 편성 내용 (형식: [[조장, 조원1, 조원2], [조장2, 조원...]])")
-        
-        if st.button("수동 추가"):
-            try:
-                parsed_groups = json.loads(new_group_text)
-                if isinstance(parsed_groups, list):
-                    new_record = {"round": new_round_num, "date": new_date, "groups": parsed_groups}
-                    db_data.append(new_record)
-                    # 회차순 정렬
-                    db_data.sort(key=lambda x: x['round'])
-                    save_data(db_data)
-                    st.success("추가되었습니다.")
-                    st.rerun()
-                else:
-                    st.error("형식이 올바르지 않습니다. 대괄호[] 리스트 형식이어야 합니다.")
-            except:
-                st.error("JSON 형식이 아닙니다. (예: [['철수', '영희'], ['민수', '길동']])")
+    df_hist = pd.DataFrame(flat_data)
+    st.dataframe(df_hist, use_container_width=True, hide_index
