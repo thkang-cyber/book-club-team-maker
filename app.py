@@ -178,4 +178,50 @@ with tab2:
         flat_data.append({"회차": record['round'], "시기": record['date'], "조 편성": " / ".join(groups_str)})
     
     df_hist = pd.DataFrame(flat_data)
-    st.dataframe(df_hist, use_container_width=True, hide_index
+    st.dataframe(df_hist, use_container_width=True, hide_index=True)
+    
+    st.divider()
+    col_del1, col_del2 = st.columns([3, 1])
+    with col_del1:
+        delete_target = st.selectbox("삭제할 회차", df_hist['회차'].sort_values(ascending=False))
+    with col_del2:
+        st.write("")
+        st.write("")
+        if st.button("🗑️ 삭제", type="primary"):
+            new_db = [r for r in db_data if r['round'] != delete_target]
+            save_data(new_db)
+            st.success("삭제 완료")
+            st.rerun()
+
+# [탭 3] 만남 분석 (추가된 부분!)
+with tab3:
+    st.header("📊 전체 만남 횟수 분석표")
+    st.caption("누가 누구와 몇 번 같은 조였는지 한눈에 확인하세요.")
+    
+    # 필터링 기능
+    search_members = st.multiselect("특정 인원만 보기 (비워두면 전체)", all_members)
+    
+    target_members = search_members if search_members else all_members
+    
+    # 데이터프레임 생성
+    matrix_data = pd.DataFrame(index=target_members, columns=target_members)
+    
+    for m1 in target_members:
+        for m2 in target_members:
+            if m1 == m2:
+                matrix_data.loc[m1, m2] = 0 # 자기 자신은 0 처리
+            else:
+                pair = tuple(sorted([clean_name(m1), clean_name(m2)]))
+                matrix_data.loc[m1, m2] = overlap_counts[pair]
+    
+    # 숫자형으로 변환
+    matrix_data = matrix_data.astype(int)
+    
+    # 히트맵 스타일 적용하여 출력
+    st.dataframe(
+        matrix_data.style.background_gradient(cmap="Reds", axis=None),
+        use_container_width=True,
+        height=600
+    )
+    
+    st.info("💡 붉은색이 진할수록 자주 만난 사이입니다.")
